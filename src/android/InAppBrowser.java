@@ -154,19 +154,9 @@ public class InAppBrowser extends CordovaPlugin {
                 File destinationFile = new File(destinationDir, fileName);
                 request.setDestinationUri(Uri.fromFile(destinationFile));
                 // Add it to the manager
-                
-                
-                registerReceiver(onComplete, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
-                
-                
                 manager.enqueue(request);
-                
-                
-                
-                
                 // Show message
                 Toast.makeText(context, "Download gestartet", Toast.LENGTH_LONG).show();
-                
             }
         };
     }
