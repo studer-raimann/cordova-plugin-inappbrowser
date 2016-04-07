@@ -40,6 +40,7 @@ import android.view.WindowManager.LayoutParams;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
+import android.webkit.CookieSyncManager;
 import android.webkit.HttpAuthHandler;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -68,24 +69,6 @@ import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.StringTokenizer;
 
-// FSX
-import android.net.Uri;
-import android.os.Environment;
-import android.webkit.DownloadListener;
-import android.app.DownloadManager;
-
-import java.io.File;
-import java.io.InputStream;
-
-import android.webkit.CookieManager;
-
-import java.net.URL;
-import java.net.HttpURLConnection;
-import android.widget.Toast;
-//import android.app.AlertDialog;
-//import android.content.DialogInterface;
-// FSX
-
 @SuppressLint("SetJavaScriptEnabled")
 public class InAppBrowser extends CordovaPlugin {
 
@@ -103,6 +86,7 @@ public class InAppBrowser extends CordovaPlugin {
     private static final String CLEAR_ALL_CACHE = "clearcache";
     private static final String CLEAR_SESSION_CACHE = "clearsessioncache";
     private static final String HARDWARE_BACK_BUTTON = "hardwareback";
+    private static final String MEDIA_PLAYBACK_REQUIRES_USER_ACTION = "mediaPlaybackRequiresUserAction";
 
     private InAppBrowserDialog dialog;
     private WebView inAppWebView;
@@ -111,56 +95,11 @@ public class InAppBrowser extends CordovaPlugin {
     private boolean showLocationBar = true;
     private boolean showZoomControls = true;
     private boolean openWindowHidden = false;
-    private boolean clearAllCache= false;
-    private boolean clearSessionCache=false;
-    private boolean hadwareBackButton=true;
-    
-    
-    /**
-     * FSX Patch
-     *
-     * @return
-     */
-    protected DownloadListener sragGetDownloadListener() {
-        final Activity activity = cordova.getActivity();
-        final Context context = activity.getApplicationContext();
-        final DownloadManager manager = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
-        final File destinationDir = new File(Environment.getExternalStorageDirectory(), context.getPackageName());
-        final CookieManager cookie = CookieManager.getInstance();
-        if (!destinationDir.exists()) {
-            destinationDir.mkdir();
-        }
-        
-        
-        return new DownloadListener() {
-            @Override
-            public void onDownloadStart(String url, String userAgent,
-                                        String contentDisposition, String mimetype,
-                                        long contentLength) {
-                
-                String fileName = contentDisposition.replaceFirst("(?i)^.*filename=\"([^\"]+)\".*$", "$1");
-                CharSequence fileNameCharSequence = fileName;
-                
-                Uri source = Uri.parse(url);
-                
-                // Make a new request pointing to the mp3 url
-                DownloadManager.Request request = new DownloadManager.Request(source);
-                request.allowScanningByMediaScanner();
-                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "download");
-                request.setTitle(fileNameCharSequence);
-                request.addRequestHeader("Cookie", cookie.getCookie(url));
-                // Use the same file name for the destination
-                File destinationFile = new File(destinationDir, fileName);
-                request.setDestinationUri(Uri.fromFile(destinationFile));
-                // Add it to the manager
-                manager.enqueue(request);
-                // Show message
-                Toast.makeText(context, "Download gestartet", Toast.LENGTH_LONG).show();
-            }
-        };
-    }
-    
+    private boolean clearAllCache = false;
+    private boolean clearSessionCache = false;
+    private boolean hadwareBackButton = true;
+    private boolean mediaPlaybackRequiresUserGesture = false;
+
     /**
      * Executes the request and returns PluginResult.
      *
@@ -264,7 +203,7 @@ public class InAppBrowser extends CordovaPlugin {
         else if (action.equals("injectScriptCode")) {
             String jsWrapper = null;
             if (args.getBoolean(1)) {
-                jsWrapper = String.format("prompt(JSON.stringify([eval(%%s)]), 'gap-iab://%s')", callbackContext.getCallbackId());
+                jsWrapper = String.format("(function(){prompt(JSON.stringify([eval(%%s)]), 'gap-iab://%s')})()", callbackContext.getCallbackId());
             }
             injectDeferredObject(args.getString(0), jsWrapper);
         }
@@ -426,20 +365,22 @@ public class InAppBrowser extends CordovaPlugin {
      * Closes the dialog
      */
     public void closeDialog() {
-        final WebView childView = this.inAppWebView;
-        // The JS protects against multiple calls, so this should happen only when
-        // closeDialog() is called by other native code.
-        if (childView == null) {
-            return;
-        }
         this.cordova.getActivity().runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                final WebView childView = inAppWebView;
+                // The JS protects against multiple calls, so this should happen only when
+                // closeDialog() is called by other native code.
+                if (childView == null) {
+                    return;
+                }
+
                 childView.setWebViewClient(new WebViewClient() {
                     // NB: wait for about:blank before dismissing
                     public void onPageFinished(WebView view, String url) {
                         if (dialog != null) {
                             dialog.dismiss();
+                            dialog = null;
                         }
                     }
                 });
@@ -447,16 +388,16 @@ public class InAppBrowser extends CordovaPlugin {
                 // other than your app's UI thread, it can cause unexpected results."
                 // http://developer.android.com/guide/webapps/migrating.html#Threads
                 childView.loadUrl("about:blank");
+
+                try {
+                    JSONObject obj = new JSONObject();
+                    obj.put("type", EXIT_EVENT);
+                    sendUpdate(obj, false);
+                } catch (JSONException ex) {
+                    Log.d(LOG_TAG, "Should never happen");
+                }
             }
         });
-
-        try {
-            JSONObject obj = new JSONObject();
-            obj.put("type", EXIT_EVENT);
-            sendUpdate(obj, false);
-        } catch (JSONException ex) {
-            Log.d(LOG_TAG, "Should never happen");
-        }
     }
 
     /**
@@ -507,11 +448,6 @@ public class InAppBrowser extends CordovaPlugin {
         } else {
             this.inAppWebView.loadUrl(url);
         }
-        
-        // FSX Patch ************************************************
-        this.inAppWebView.setDownloadListener(this.sragGetDownloadListener());
-        // FSX Patch ***********************************************
-        
         this.inAppWebView.requestFocus();
     }
 
@@ -540,6 +476,8 @@ public class InAppBrowser extends CordovaPlugin {
         showLocationBar = true;
         showZoomControls = true;
         openWindowHidden = false;
+        mediaPlaybackRequiresUserGesture = false;
+
         if (features != null) {
             Boolean show = features.get(LOCATION);
             if (show != null) {
@@ -557,6 +495,10 @@ public class InAppBrowser extends CordovaPlugin {
             if (hardwareBack != null) {
                 hadwareBackButton = hardwareBack.booleanValue();
             }
+            Boolean mediaPlayback = features.get(MEDIA_PLAYBACK_REQUIRES_USER_ACTION);
+            if (mediaPlayback != null) {
+                mediaPlaybackRequiresUserGesture = mediaPlayback.booleanValue();
+            }
             Boolean cache = features.get(CLEAR_ALL_CACHE);
             if (cache != null) {
                 clearAllCache = cache.booleanValue();
@@ -569,12 +511,7 @@ public class InAppBrowser extends CordovaPlugin {
         }
 
         final CordovaWebView thatWebView = this.webView;
-        
-        // FSX Patch
-        final DownloadListener sragdllistener = this.sragGetDownloadListener();
-        // FSX Patch
-        
-        
+
         // Create dialog in new thread
         Runnable runnable = new Runnable() {
             /**
@@ -593,6 +530,12 @@ public class InAppBrowser extends CordovaPlugin {
 
             @SuppressLint("NewApi")
             public void run() {
+
+                // CB-6702 InAppBrowser hangs when opening more than one instance
+                if (dialog != null) {
+                    dialog.dismiss();
+                };
+
                 // Let's create the main dialog
                 dialog = new InAppBrowserDialog(cordova.getActivity(), android.R.style.Theme_NoTitleBar);
                 dialog.getWindow().getAttributes().windowAnimations = android.R.style.Animation_Dialog;
@@ -629,7 +572,7 @@ public class InAppBrowser extends CordovaPlugin {
                 back.setId(Integer.valueOf(2));
                 Resources activityRes = cordova.getActivity().getResources();
                 int backResId = activityRes.getIdentifier("ic_action_previous_item", "drawable", cordova.getActivity().getPackageName());
-                Drawable backIcon = activityRes.getDrawable(backResId, cordova.getActivity().getTheme());
+                Drawable backIcon = activityRes.getDrawable(backResId);
                 back.setBackground(null);
                 back.setImageDrawable(backIcon);
                 back.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -751,12 +694,7 @@ public class InAppBrowser extends CordovaPlugin {
                 }
 
                 inAppWebView.loadUrl(url);
-                
-                // FSX Patch ************************************************
-                inAppWebView.setDownloadListener(sragdllistener);
-                // FSX Patch ***********************************************
-                
-                inAppWebView.setId(6);
+                inAppWebView.setId(Integer.valueOf(6));
                 inAppWebView.getSettings().setLoadWithOverviewMode(true);
                 inAppWebView.getSettings().setUseWideViewPort(true);
                 inAppWebView.requestFocus();
@@ -949,6 +887,13 @@ public class InAppBrowser extends CordovaPlugin {
         public void onPageFinished(WebView view, String url) {
             super.onPageFinished(view, url);
 
+            // CB-10395 InAppBrowser's WebView not storing cookies reliable to local device storage
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                CookieManager.getInstance().flush();
+            } else {
+                CookieSyncManager.getInstance().sync();
+            }
+
             try {
                 JSONObject obj = new JSONObject();
                 obj.put("type", LOAD_STOP_EVENT);
@@ -975,7 +920,7 @@ public class InAppBrowser extends CordovaPlugin {
                 Log.d(LOG_TAG, "Should never happen");
             }
         }
-        
+
         /**
          * On received http auth request.
          */
@@ -991,7 +936,7 @@ public class InAppBrowser extends CordovaPlugin {
             } catch (IllegalAccessException e) {
             } catch (InvocationTargetException e) {
             }
-            
+
             if (pluginManager == null) {
                 try {
                     Field pmf = webView.getClass().getField("pluginManager");
@@ -1000,14 +945,13 @@ public class InAppBrowser extends CordovaPlugin {
                 } catch (IllegalAccessException e) {
                 }
             }
-            
+
             if (pluginManager != null && pluginManager.onReceivedHttpAuthRequest(webView, new CordovaHttpAuthHandler(handler), host, realm)) {
                 return;
             }
-            
+
             // By default handle 401 like we'd normally do!
             super.onReceivedHttpAuthRequest(view, handler, host, realm);
         }
     }
 }
-
