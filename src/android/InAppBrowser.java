@@ -69,6 +69,25 @@ import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.StringTokenizer;
 
+// FSX
+import android.net.Uri;
+import android.os.Environment;
+import android.webkit.DownloadListener;
+import android.app.DownloadManager;
+
+import java.io.File;
+import java.io.InputStream;
+
+import android.webkit.CookieManager;
+
+import java.net.URL;
+import java.net.HttpURLConnection;
+import android.widget.Toast;
+//import android.app.AlertDialog;
+//import android.content.DialogInterface;
+// FSX
+
+
 @SuppressLint("SetJavaScriptEnabled")
 public class InAppBrowser extends CordovaPlugin {
 
@@ -99,6 +118,60 @@ public class InAppBrowser extends CordovaPlugin {
     private boolean clearSessionCache = false;
     private boolean hadwareBackButton = true;
     private boolean mediaPlaybackRequiresUserGesture = false;
+
+
+        /**
+         * FSX Patch
+         *
+         * @return
+         */
+        protected DownloadListener sragGetDownloadListener() {
+            // final Activity activity = cordova.getActivity();
+            // final Context context = activity.getApplicationContext();
+            final Context context = cordova.getActivity().getApplicationContext();
+            final DownloadManager manager = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
+            final File destinationDir = new File(Environment.getExternalStorageDirectory(), context.getPackageName());
+            final CookieManager cookie = CookieManager.getInstance();
+            if (!destinationDir.exists()) {
+                destinationDir.mkdir();
+            }
+
+
+            return new DownloadListener() {
+                @Override
+                public void onDownloadStart(String url, String userAgent,
+                                            String contentDisposition, String mimetype,
+                                            long contentLength) {
+
+                    String fileName = contentDisposition.replaceFirst("(?i)^.*filename=\"([^\"]+)\".*$", "$1");
+                    CharSequence fileNameCharSequence = fileName;
+
+                    Uri source = Uri.parse(url);
+
+                    // Make a new request pointing to the mp3 url
+                    DownloadManager.Request request = new DownloadManager.Request(source);
+                    request.allowScanningByMediaScanner();
+                    request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "download");
+                    request.setTitle(fileNameCharSequence);
+                    request.addRequestHeader("Cookie", cookie.getCookie(url));
+                    // Use the same file name for the destination
+                    File destinationFile = new File(destinationDir, fileName);
+                    request.setDestinationUri(Uri.fromFile(destinationFile));
+                    // Add it to the manager
+
+                    // registerReceiver(onComplete, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+
+                    manager.enqueue(request);
+
+                    // Show message
+                    Toast.makeText(context, "Download gestartet", Toast.LENGTH_LONG).show();
+
+                }
+            };
+        }
+
+
 
     /**
      * Executes the request and returns PluginResult.
@@ -512,6 +585,11 @@ public class InAppBrowser extends CordovaPlugin {
 
         final CordovaWebView thatWebView = this.webView;
 
+         // FSX Patch
+         final DownloadListener sragdllistener = this.sragGetDownloadListener();
+         // FSX Patch
+
+
         // Create dialog in new thread
         Runnable runnable = new Runnable() {
             /**
@@ -654,6 +732,11 @@ public class InAppBrowser extends CordovaPlugin {
                 inAppWebView = new WebView(cordova.getActivity());
                 inAppWebView.setLayoutParams(new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
                 inAppWebView.setId(Integer.valueOf(6));
+
+                // FSX Patch ************************************************
+                inAppWebView.setDownloadListener(sragdllistener);
+                // FSX Patch ***********************************************
+
                 inAppWebView.setWebChromeClient(new InAppChromeClient(thatWebView));
                 WebViewClient client = new InAppBrowserClient(thatWebView, edittext);
                 inAppWebView.setWebViewClient(client);
